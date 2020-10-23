@@ -4,7 +4,7 @@ Multithreading in Bash really speeds some things up if you have many cores.
 
 ### Usage
 
-    . threading # or thread_append
+    . threading # or threading_append
     thread_init
 
     for x; do
