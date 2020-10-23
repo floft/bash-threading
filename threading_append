@@ -1,0 +1,87 @@
+#!/bin/bash
+##
+## A few simple functions to simplify sending a certain number of processes
+## to the background to speed up programs on multi-core systems. This is the
+## appending-to-current-trap-signals version. These conflict, so you can only
+## use one or the other.
+##
+## Notes:
+##
+##  * If you already have processes sent to the background, the thread count
+##    will be off.
+##  * This will append to your current INT and TERM trap signals and restore
+##    after it's done. If you change your trap before this completes, it will
+##    restore it to what it was before (which will definitely be a surprise).
+##  * Your trap signal cannot contain a single quote, otherwise appending and
+##    restoring will fail.
+##
+## Usage:
+##
+#   . /scripts/threading_append
+#   thread_init
+#
+#   for i in {1..100}; do
+#   	{ echo $i; sleep $i; } &
+#	thread_wait
+#   done
+#   
+#   thread_finish
+#
+_thread_signals=(2 15) # SIGINT, SIGTERM
+_thread_count=$(($(grep processor /proc/cpuinfo 2>/dev/null|wc -l)-1))
+[[ $_thread_count == "" ]] && _thread_count=0 #ends up being one more than this
+
+_thread_kill() {
+	local t
+
+	for t; do
+		kill $t &>/dev/null
+	done
+
+	wait
+}
+
+# Call this before starting any threads
+thread_init() {
+    local trap_str signal
+
+	_thread_list=()
+    _thread_original=()
+    trap_str="echo \"Exiting...\"; _thread_kill \"\${_thread_list[@]}\"; exit 1"
+
+    # Append to current traps if there are any and save for restoration later
+    for signal in "${_thread_signals[@]}"; do
+        if [[ $(trap -p $signal) =~ trap\ --\ \'([^\']+)\'.* ]]; then
+            _thread_original[$signal]="${BASH_REMATCH[1]}"
+            trap "${BASH_REMATCH[1]}; $trap_str" $signal
+        else
+            trap "$trap_str" $signal
+        fi
+    done
+}
+
+# Call this after you start a thread
+thread_wait() {
+ 	_thread_list+=("$!")
+
+	while (( $(jobs|wc -l) > _thread_count )); do
+		sleep 0.05
+		jobs &>/dev/null
+	done
+}
+
+# Call this after you are done starting threads
+thread_finish() {
+    local signal
+
+	wait
+
+    # Restore previous traps if there were any
+    for signal in "${_thread_signals[@]}"; do
+        if [[ -n "${_thread_original[$signal]}" ]]; then
+            trap "${_thread_original[$signal]}" $signal
+        else
+            trap - $signal
+        fi
+    done
+}
